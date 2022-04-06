@@ -6,59 +6,82 @@
 #define global_variable static
 
 
+typedef unsigned char uint8;
+
 global_variable bool Running;
 global_variable BITMAPINFO BitMapInfo;
 global_variable void* BitmapMemory;
 global_variable HBITMAP BitMapHandle;
-global_variable HDC DeviceContext;
+global_variable int BitmapWidth ;
+global_variable int BitmapHeight ;
+
+internal void
+RenderGradient(int XOffset, int YOffset)
+{
+
+
+	
+
+	int Pitch = BitmapWidth * 4;
+	uint8* Row = (uint8*)BitmapMemory;
+
+	for (int Y = 0; Y < BitmapHeight; ++Y)
+	{
+		UINT32* Pixel = (UINT32*)Row;
+		for (int X = 0; X < BitmapWidth; ++X)
+		{
+			uint8 Blue = (X + XOffset);
+			uint8 Green = (Y + YOffset);
+
+			*Pixel++ = ((Green << 8) | Blue);
+		}
+		Row += Pitch;
+	}
+}
+
+
 
 internal void
 Win32ResizeDIBSection(int Width, int Height) {
 
 
-	if (BitMapHandle) {
-		DeleteObject(BitMapHandle);
-	}
-	else {
-		HDC DeviceContext = CreateCompatibleDC(0);
+	if (BitmapMemory) {
+		VirtualFree(BitmapMemory, 0, MEM_RELEASE);
 	}
 
+	BitmapWidth = Width;
+	BitmapHeight = Height;
 
-	BITMAPINFO BitMapInfo;
-	BitMapInfo.bmiHeader.biSize = sizeof(BitMapInfo.bmiHeader.biSize);
-	BitMapInfo.bmiHeader.biWidth = Width;
-	BitMapInfo.bmiHeader.biHeight = Height;
+	BitMapInfo.bmiHeader.biSize = sizeof(BitMapInfo.bmiHeader);
+	BitMapInfo.bmiHeader.biWidth = BitmapWidth;
+	BitMapInfo.bmiHeader.biHeight = -BitmapHeight;
 	BitMapInfo.bmiHeader.biPlanes = 1;
 	BitMapInfo.bmiHeader.biBitCount = 32;
 	BitMapInfo.bmiHeader.biCompression = BI_RGB;
 
-	void* BitmapMemory;
+	int BytesPerPixel = 4;
+	int BitmapMemorySize = (BitmapWidth * BitmapHeight) * BytesPerPixel;
+	BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
-
-	HBITMAP BitMapHandle = CreateDIBSection(
-		DeviceContext,
-		&BitMapInfo,
-		DIB_RGB_COLORS,
-		&BitmapMemory,
-		0,
-		0);
+	RenderGradient(0, 0);
 }
 
 internal void
-Win32UpdatWindow(HDC DeviceContext, int X, int Y, int Width, int Height) {
+Win32UpdatWindow(HDC DeviceContext, RECT *WindowRect, int X, int Y, int Width, int Height) {
 
-	 StretchDIBits(
+	int WindowWidth = WindowRect->right - WindowRect->left;
+	int WindowHeight = WindowRect->bottom - WindowRect->top;
+
+	StretchDIBits(
 		DeviceContext,
-		X,
-		Y,
-		Width,
-		Height,
-		X, Y, Width, Height,
-		 BitmapMemory,
-		 &BitMapInfo,
-		 DIB_RGB_COLORS,
-		 SRCCOPY
-		 );
+
+		0, 0, BitmapWidth, BitmapHeight,
+		0, 0, WindowWidth, WindowHeight, 
+		BitmapMemory,
+		&BitMapInfo,
+		DIB_RGB_COLORS,
+		SRCCOPY
+	);
 }
 
 LRESULT CALLBACK
@@ -99,18 +122,13 @@ MainWindowCallback(HWND Window,
 		PAINTSTRUCT Paint;
 		HDC DeviceContext = BeginPaint(Window, &Paint);
 		LONG Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
-		LONG Width = Paint.rcPaint.left - Paint.rcPaint.right;
+		LONG Width = Paint.rcPaint.right - Paint.rcPaint.left;
 		int X = Paint.rcPaint.left;
 		int Y = Paint.rcPaint.top;
-		static DWORD Operation = WHITENESS;
-		PatBlt(DeviceContext, X, Y, Width, Height, Operation);
-		if (Operation == WHITENESS)
-		{
-			Operation = BLACKNESS;
-		}
-		else {
-			Operation = WHITENESS;
-		}
+
+		RECT ClientRect;
+		GetClientRect(Window, &ClientRect);
+		Win32UpdatWindow(DeviceContext, &ClientRect,X, Y, Width, Height);
 		EndPaint(Window, &Paint);
 
 
@@ -152,19 +170,37 @@ WinMain(HINSTANCE Instance,
 			Instance,
 			0);
 		if (WindowHandle) {
-			MSG Message;
-			for (;;)
+			
+			int XOffset = 0;
+			int YOffset = 0;
+
+			Running = true;
+			while (Running)
 			{
-				BOOL MessageResult = GetMessage(&Message, 0, 0, 0);
-				if (MessageResult > 0)
+				MSG Message;
+				while (PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
 				{
-					TranslateMessage(&Message);
-					DispatchMessage(&Message);
+					if (Message.message == WM_QUIT)
+					{
+						Running = FALSE;
+					}
+
+						TranslateMessage(&Message);
+						DispatchMessage(&Message);
 				}
-				else {
-					break;
-				}
+
+				RenderGradient(XOffset, YOffset);
+
+				HDC DeviceContext = GetDC(WindowHandle);
+				RECT ClientRect;
+				GetClientRect(WindowHandle, &ClientRect);
+				int WindowWidth = ClientRect.right - ClientRect.left;
+				int WindowHeight = ClientRect.bottom - ClientRect.top;
+				Win32UpdatWindow(DeviceContext, &ClientRect, 0, 0, WindowWidth, WindowHeight);
+				ReleaseDC(WindowHandle, DeviceContext);
+				XOffset++;
 			}
+
 
 		}
 	}
@@ -172,17 +208,3 @@ WinMain(HINSTANCE Instance,
 		return(1);
 	}
 }
-
-
-//typedef struct  {
-
-//	WNDPROC lpfnWndProc;
-//	int cbClsExtra;
-//	int cbWndExtra;
-//	HANDLE hInstance;
-//	HICON hIcon;
-//	HCURSOR hCursor;
-//	HBRUSH hbrBackground;
-//	LPCTSTR lpszMenuName;
-//	LPCTSTR lpszClassName;
-//} WNDCLASS;
